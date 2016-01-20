@@ -1,0 +1,173 @@
+---
+title: "mappingmethod"
+author: "Luke"
+date: "January 19, 2016"
+output: html_document
+---
+#LOAD PACKAGES
+```{r,results="hide"}
+library(psych)
+library(stats)
+library(plyr)
+library(MASS)
+library(leaps)
+library(car)
+library(corrplot)
+library(ggplot2)
+library(cluster)   #for clusplot
+library(data.table)
+library(knitr)
+library(dplyr)
+```
+##Libraries required for Geo Map Tracts plot
+```{r,results="hide"}
+library(rgdal)
+library(scales)
+library(ggmap)
+#install.packages('Cairo')
+#library(Cairo)
+install.packages("gpclib", type="source") # RUN THIS IF YOU GET AN ERROR ON 'fortify' BELOW
+library(rgeos)
+library(maptools)
+library(data.table)
+```
+#PRELOAD AND PROCESSING
+```{r}
+###The CSV_file is the meta data(MasterFile)
+setwd("~/Desktop/housing projects/R/cmapdata")
+CSV_file <- read.csv("MasterFile_ExcludeTracts_1980.csv", head=TRUE, sep=",", stringsAsFactors = F)
+###Splitting the data for future analyze 
+#1.cmap2013
+#2.data change
+####All in format of dataframe. Then Skip the total population and total HouseUnits
+
+cmap2013.df = CSV_file[, c(1, 6, 8, 10, 12:22, 24, 26, 28, 30:32, 34, 36, 38, 40,
+              42, 44, 46:47, 53:57, 59, 61, 63:64, 67, 69, 71, 73:76, 84, 86)]  
+
+chg00_13.df = CSV_file[, c(1, 3, 5, 7, 9, 11, 23, 25, 27, 29, 30:31, 33, 35, 37, 39,
+              41, 43, 45, 48:52, 58, 60, 62, 65:66, 68, 70, 72, 77:83, 85, 87)]
+##Skip Y2013 Total Population and Total HouseUnits in Columns 2 & 4
+cmap2013.df = CSV_file[, c(6, 8, 10, 12:22, 24, 26, 28, 30:32, 34, 36, 38, 40,
+              42, 44, 46:47, 53:57, 59, 61, 63:64, 67, 69, 71, 73:76,84, 86)]  
+
+chg00_13.df = CSV_file[, c(3, 5, 7, 9, 11, 23, 25, 27, 29, 30:31, 33, 35, 37, 39,
+              41, 43, 45, 48:52, 58, 60, 62, 65:66, 68, 70, 72, 77:83, 85, 87:90)] 
+
+#???????remove desire variables from  datasets ?What means desire?
+cmap2013.df$Y13_MedGrRent_Scaled <- NULL
+cmap2013.df$Y13_PCT_HUnits_CostBurden_LT30 <- NULL
+cmap2013.df$Y14PCT_Renter_Moved1980to1999 <- NULL
+chg00_13.df$Chg_PCT_MedGrossRent <- NULL
+chg00_13.df$OwnerChange <- NULL
+chg00_13.df$HUD_Housing_Pct_of_HHIncome_hh_h <- NULL
+chg00_13.df$HUD_Transportation_Pct_of_HHIncome_hh_t <- NULL
+
+#Clustering
+##Cluster-PAM
+##Using PAM cluster to make segmentation of tracts based on variables we have
+###km13.data & kmchg.data
+#####Analyzing 2013 data or the chg data?
+km13.data = data.table(cmap2013.df)
+kmchg.data = data.table(chg00_13.df)
+#??????????????????????set all NA values to 0? or -1
+km13.data[is.na(km13.data)] = -1
+kmchg.data[is.na(kmchg.data)] = -1
+km13.scaled = scale(km13.data)
+kmchg.scaled = scale(kmchg.data)
+#-- try clusplot from pkg CLUSTER
+par(mar=c(5, 4, 4, 2))   #default
+```
+
+
+#Over view
+##1.Create cluster data(cluster data------data need to be analyze with cluster idx)
+##2.Bin Non-numeric Variables 
+##3.Concatenating shape files(2) punctiation file(1) to cluster data 
+##4.Generate tract based, county based, punctuation based mapping---layer by layer
+
+##1.Generate cluster data
+###The input cluster data is kmchg or km13 both scaled and k needs to be specified
+```{r}
+gencludata <- function(data,k){
+    fitpam <- pam(data, k, metric = "euclidean")
+    clusteridx <- as.data.frame(fitpam$clustering)
+    clusteridx$CensusTract <- CSV_file$CensusTract
+    cmbindata <- as.data.frame(data)
+    cmbindata$CensusTract <- CSV_file$CensusTract
+    integratedata <- merge(clusteridx,cmbindata,by='CensusTract')
+    names(integratedata)[2]<-"ClusterNum"
+    return(integratedata)
+}
+```
+
+##2.Bin Non-numeric Variables 
+###More Variables contains in bin rmd file
+```{r}
+integratedata <- gencludata(kmchg.scaled,8)
+
+hist(integratedata$Chg_Educate_HighSchool_orLess)
+quantileL = quantile(integratedata$Chg_Educate_HighSchool_orLess, names = FALSE)
+
+# always put an order number in front of letter! This will help us when we convert it
+integratedata$Cha_Chg_Educate_HighSchool_orLess = "1-Low"
+integratedata$Cha_Chg_Educate_HighSchool_orLess[which(integratedata$Chg_Educate_HighSchool_orLess>quantileL[2])] = "2-Median"
+integratedata$Cha_Chg_Educate_HighSchool_orLess[which(integratedata$Chg_Educate_HighSchool_orLess>quantileL[3])] = "3-High"
+integratedata$Cha_Chg_Educate_HighSchool_orLess[which(integratedata$Chg_Educate_HighSchool_orLess>quantileL[4])] = "4-Very High"
+# check result
+hist(as.numeric(substr(integratedata$Cha_Chg_Educate_HighSchool_orLess,0,1)))
+
+# convert into factor
+integratedata$Cha_Chg_Educate_HighSchool_orLess = as.factor(integratedata$Cha_Chg_Educate_HighSchool_orLess)
+```
+
+##3.Concatenating shape files(2) punctiation file(1) to cluster data 
+```{r}
+#integratedata <- gencludata(kmchg.scaled,8)
+#Load 3 shape files
+tract.shapefile <- read.csv("tract_shapefile_2010.csv", head=TRUE, sep=",", stringsAsFactors = F)
+county.shapefile <- read.csv("county_shapefile_2010.csv", head=TRUE, sep=",", stringsAsFactors = F)
+tract_county <- read.csv("CensusTract2013_to_CountyIDs_forShapeFiles.csv", head=TRUE, sep=",", stringsAsFactors = F)
+Gazetteer <- read.table("Illinois Gazetteer Files 2010.txt", head=TRUE, stringsAsFactors = F)
+Gazetteer.geo = Gazetteer[,c("GEOID","INTPTLAT","INTPTLONG")]
+colnames(Gazetteer.geo) <- c("id", "lat", "long")
+#Concatenating
+#1 Tract
+integratedata$CensusTract <- as.character(integratedata$CensusTract) 
+integratedata$CensusTract = paste("1400000US", integratedata$CensusTract, sep = "")
+plotData1<- left_join(tract.shapefile, integratedata, by = c("id" = "CensusTract")) 
+
+#2 Tract+County
+#Integrating three datasets integratedata <---> tract_county <---> county.shapefile
+tract_county$CensusTract2013 = as.character(tract_county$CensusTract2013)
+tract_county$CensusTract = paste("1400000US", tract_county$CensusTract2013, sep = "")
+tract_county$countyidChar <- as.character(tract_county$CountyID)
+
+Middledata <- left_join(integratedata, tract_county, by = c("CensusTract" = "CensusTract")) 
+Middledata$countyidChar = as.character(Middledata$countyidChar)
+county.shapefile$id = as.character(county.shapefile$id)
+plotData2 <- left_join(county.shapefile, Middledata, by = c("id" = "countyidChar"))
+
+#3 Punctuation
+Gazetteer.geo$id = paste("1400000US", Gazetteer.geo$id, sep = "")
+plotDataPunc <- left_join(integratedata, Gazetteer.geo, by = c("CensusTract" = "id"))
+```
+
+##4.Generate tract based, county based, punctuation based mapping---layer by layer
+```{r}
+yourMap <- ggplot() +
+    geom_polygon(data = plotData1, aes(x=long, y=lat, group = group, fill = factor(ClusterNum)), colour = "black", size = 0.2)
+#print(yourMap)
+
+yourMap2 <- yourMap+
+    geom_polygon(data = plotData2, aes(x = long, y = lat, group = group), colour = "white", fill = NA)
+#print(yourMap2)
+```
+
+```{r}
+yourMap3 <- yourMap2+
+    geom_point(data = plotDataPunc, aes(x=long, y=lat,shape=factor(Cha_Chg_Educate_HighSchool_orLess)))
+print(yourMap3)
+```
+
+
+
