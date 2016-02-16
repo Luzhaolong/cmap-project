@@ -1,0 +1,297 @@
+---
+title: "luke analysis-CMAPproject"
+author: "Luke"
+date: "February 12, 2016"
+output: html_document
+---
+
+Packages
+```{r-setup files & libraries}
+library(psych)
+library(stats)
+library(plyr)
+library(MASS)
+library(leaps)
+library(car)
+library(corrplot)
+library(ggplot2)
+library(cluster)   #for clusplot
+library(data.table)
+library(knitr)
+library(dplyr)
+library(VIM)
+#install.packages('clValid')
+library(clValid)
+library(xlsx)
+```
+
+Load Data
+```{r}
+path = '~/Desktop/housing projects/R/data'
+setwd(path)
+CSV_file <- read.csv('MasterFile_1980.csv', head=TRUE, sep=",", stringsAsFactors = F)  
+origHomeicm_file <- read.csv('HomeValueIncome_UNscaled.csv',sep=',',head=TRUE,stringsAsFactors = F)
+orighomeval.df<-origHomeicm_file[,c(1:7)]
+```
+
+----- Split CSV_file 1 into separate DFs ---------
+Skip Y2013 Total Population and Total HouseUnits in Columns 2 & 4
+Ignore Census Tract for initial analysis like COrrelation
+Skip Y2013 Total Population and Total HouseUnits in Columns 2 & 4
+```{r-split files preprocessing}
+cmap2013.df = CSV_file[, c(1, 6, 8, 10, 12:22, 24, 26, 28, 30:32, 34, 36, 38, 40,
+              42, 44, 46:47, 53:57, 59, 61, 63:64, 67, 69, 71, 73:76,84, 86)]  
+chg00_13.df = CSV_file[, c(1, 3, 5, 7, 9, 11, 23, 25, 27, 29, 30:31, 33, 35, 37, 39,
+              41, 43, 45, 48:52, 58, 60, 62, 65:66, 68, 70, 72, 77:83, 85, 87:90)]    
+```
+--- Full 46 Vars with extra Y2000 variables added -----------
+remove desire variables from  datasets 
+```{r-split files preprocessing}
+#cmap2013
+cmap2013.df$Y13_MedGrRent_Scaled <- NULL
+cmap2013.df$Y13_PCT_HUnits_CostBurden_LT30 <- NULL
+cmap2013.df$Y14PCT_Renter_Moved1980to1999 <- NULL
+cmap2013.df$Y14_PCT_OtherRace_Alone <- NULL
+cmap2013.df$Y14_PCT_Not_Hispanic_or_Latino_Total <- NULL
+cmap2013.df$Y14_PCT_Two_or_More_Races <- NULL
+cmap2013.df$Y13_PCT_OwnerCount <- NULL
+cmap2013.df$Y13_MedGrRent_Scaled <- NULL
+cmap2013.df$Scaled_PopDensity2013 <- NULL
+cmap2013.df$Y13_PCT_HUnits_CostBurden_LT30 <- NULL
+cmap2013.df$Y14PCT_Renter_Moved2000to2010_orLater  <- NULL
+#Deal with MissingValues
+cmap2013.missv = aggr(cmap2013.df, prop=FALSE, numbers=TRUE)
+summary(cmap2013.missv)
+#chg00_13
+chg00_13.df$Chg_PCT_MedGrossRent <- NULL
+chg00_13.df$OwnerChange <- NULL
+chg00_13.df$Change_CostBurden_LTE30 <- NULL
+chg00_13.df$Chg_Scaled_PopDensity <- NULL
+chg00_13.df$HUD_Housing_Pct_of_HHIncome_hh_h <- NULL
+chg00_13.df$HUD_Transportation_Pct_of_HHIncome_hh_t <- NULL
+chg00_13.df$Chg_PCT_Not_Hispanic_or_Latino  <- NULL
+chg00_13.df$Chg_PCT_OtherRace_Alone   <- NULL
+chg00_13.df$Chg_PCT_Two_or_More_Races  <- NULL
+
+chg00_13.missv = aggr(chg00_13.df, prop=FALSE, numbers=TRUE)
+summary(chg00_13.missv)
+```
+
+```{r clustering PAM preprocessing}
+km13.data = data.table(cmap2013.df)
+kmchg.data = data.table(chg00_13.df)
+
+km13.data = na.omit(km13.data)
+km13.bkp = km13.data
+km13.data$CensusTract <- NULL
+
+kmgchg.nasbset = na.omit(kmchg.data, invert=TRUE)
+kmchg.data = na.omit(kmchg.data)
+kmchg.bkp = kmchg.data #kmchg backup
+kmchg.data$CensusTract <- NULL
+```
+
+Seleting Clustering Methods
+```{r}
+######################################
+kmchg.data <- data.frame(kmchg.data)##
+######################################
+intern <- clValid(kmchg.data[1:nrow(kmchg.data),],5:12,clMethods=c('hierarchical','kmeans','pam'),validation='internal')
+getRanksWeights(intern)$ranks
+
+stab <- clValid(kmchg.data[1:nrow(kmchg.data),],5:12,clMethods=c('hierarchical','kmeans','pam'),validation='stability')#Time consuming and not converge in 10 iterations
+getRanksWeights(stab)$ranks
+
+result <- clValid(kmchg.data[1:nrow(kmchg.data),],3:15,clMethods=c('kmeans','pam'),validation=c('internal'))
+res <- getRanksWeights(result)
+print(res$ranks,quote=FALSE)
+
+#Internal 2:15 different method
+result1 <- clValid(kmchg.data[1:nrow(kmchg.data),],2:15,clMethods=c('hierarchical'),validation=c('internal'))
+res1 <- getRanksWeights(result1)
+print(res1$ranks,quote=FALSE)
+
+result2 <- clValid(kmchg.data[1:nrow(kmchg.data),],2:15,clMethods=c('kmeans'),validation=c('internal'))
+res2 <- getRanksWeights(result2)
+print(res2$ranks,quote=FALSE)
+
+result3 <- clValid(kmchg.data[1:nrow(kmchg.data),],2:15,clMethods=c('pam'),validation=c('internal'))
+res3 <- getRanksWeights(result3)
+print(res3$ranks,quote=FALSE)
+
+#Hierarchical clustering
+d <- dist(kmchg.data,method='euclidean')
+fit <-hclust(d,method='ward.D')
+group<- cutree(fit,k=7)
+rect.hclust(fit,k=7,border='red')
+```
+
+Producting Cluster index number
+#Both pamindex and kmindex aim to catch the input data and parameters 
+#then return the dataset with cluster index attached with original data
+```{r clust index function}
+pamindex <- function (data,k,distmethod){
+    fit <- pam(data,k,metric = distmethod)
+    pamclster = as.data.frame(fit$clustering)
+    pamclster$CensusTract =  kmchg.bkp$CensusTract     
+    pam.data = as.data.frame(kmchg.data)
+    pam.data$CensusTract =  kmchg.bkp$CensusTract              
+    pamclster <- merge(pamclster, pam.data, by="CensusTract")
+    names(pamclster)[2] <- "ClusterNum"
+    VariMaxData = pamclster 
+    return (VariMaxData)
+}
+kmindex<- function(data,k){
+    fit <- kmeans(data,k)
+    kmclster = as.data.frame(fit$cluster)
+    kmclster$CensusTract =  kmchg.bkp$CensusTract     
+    km.data = as.data.frame(kmchg.data)
+    km.data$CensusTract =  kmchg.bkp$CensusTract              
+    kmclster <- merge(kmclster, km.data, by="CensusTract")
+    names(kmclster)[2] <- "ClusterNum"
+    VariMaxData = kmclster
+    return (VariMaxData)
+}
+```
+
+#Both anovatest function will return the variable doesn't pass the anova test with relative clustering #methond and the boxplot of each variable.
+```{r ANOVA test variance confirm on N clusters of method M}
+boxp1 <- function(data,i){
+    data <- data.frame(data)
+    p <- ggplot(data, aes(x=ClusterNum, y=data[,i])) +
+        geom_boxplot(aes(group=ClusterNum,y =data[,i],color = factor(ClusterNum))) +
+        scale_x_continuous(breaks = seq(1,8,by=1)) +
+        theme(axis.text.x = element_text(angle=45, vjust=0.5)) +
+        ylab(colnames(data)[i]) +
+        ggtitle(paste('Boxplot for',colnames(data)[i] ,'across each cluster'))
+    print (p)
+}
+anovatestpam <- function (data,k,distmethod){
+    datause <- pamindex(data,k,distmethod)
+    for (i in 3:ncol(datause)){
+        anovtest = aov(datause[,i]~datause[,2], data=datause)
+        p_value <- summary(anovtest)[[1]][["Pr(>F)"]][1]
+        if (p_value > 0.05){
+            print(c(i,colnames(datause)[i],p_value))
+            boxp1(datause,i)
+        }
+    }
+}
+
+anovatestkm <- function (data,k){
+    datause <- kmindex(data,k)
+    for (i in 3:ncol(datause)){
+        anovtest = aov(datause[,i]~datause[,2], data=datause)
+        p_value <- summary(anovtest)[[1]][["Pr(>F)"]][1]
+        if (p_value > 0.05){
+            print(c(i,colnames(datause)[i],p_value))
+            boxp1(datause,i)
+        }
+    }
+}
+```
+
+```{r luke ploting data comparison among clusters}
+boxp <- function(data1){
+    data1 <- data.frame(data1)
+    col_num <- ncol(data1)
+    for (i in 2:col_num){
+        p <- ggplot(data1, aes(x=ClusterNum, y=data1[,i])) +
+            geom_boxplot(aes(group=ClusterNum,y =data1[,i],color = factor(ClusterNum))) +
+            scale_x_continuous(breaks = seq(1,8,by=1)) +
+            theme(axis.text.x = element_text(angle=45, vjust=0.5)) +
+            ylab(colnames(data1)[i]) +
+            ggtitle(paste('Boxplot for',colnames(data1)[i] ,'across each cluster'))
+        print (p)
+    }
+}
+
+vilop <- function(data1){
+    data1 <- data.frame(data1)
+    col_num <- ncol(data1)
+    for (i in 2:col_num){
+        p <- ggplot(data1, aes(x=ClusterNum, y=data1[,i])) +
+            geom_violin(aes(group=ClusterNum,y =data1[,i],color = factor(ClusterNum))) +
+            scale_x_continuous(breaks = seq(1,8,by=1)) +
+            theme(axis.text.x = element_text(angle=45, vjust=0.5)) +
+            ylab(colnames(data1)[i]) +
+            ggtitle(paste('Boxplot for',colnames(data1)[i] ,'across each cluster'))
+        print (p)
+    }
+}
+
+histcpr <- function(data1){
+    data1 <- data.frame(data1)
+    col_num <- ncol(data1)
+    for (i in 2:col_num){
+        p <- ggplot(data1,aes(data1[,i],fill=factor(ClusterNum))) +
+            geom_histogram(color = 'grey30',binwidth = 0.05) +
+            facet_grid(ClusterNum~.) +
+            xlab(colnames(data1)[i]) +
+            ylab(colnames(data1)[i]) +
+            ggtitle(paste('histogram for',colnames(data1)[i] ,'across each cluster'))
+        print (p)
+    }
+}
+```
+
+```{r load geo basefile}
+#Load shape file
+tract.shapefile <- read.csv("tract_shapefile_2010.csv", head=TRUE, sep=",", stringsAsFactors = F)
+county.shapefile <- read.csv("county_shapefile_2010.csv", head=TRUE, sep=",", stringsAsFactors = F)
+tract_county <- read.csv("CensusTract2013_to_CountyIDs_forShapeFiles.csv", head=TRUE, sep=",", stringsAsFactors = F)
+Gazetteer <- read.table("Illinois Gazetteer Files 2010.txt", head=TRUE, stringsAsFactors = F)
+Gazetteer.geo = Gazetteer[,c("GEOID","INTPTLAT","INTPTLONG")]
+colnames(Gazetteer.geo) <- c("id", "lat", "long")
+```
+
+```{r combine file by index-censustract}
+tract_county$CensusTract2013 = as.character(tract_county$CensusTract2013)
+tract_county$CensusTract = paste("1400000US", tract_county$CensusTract2013, sep = "")
+tract_county$countyidChar <- as.character(tract_county$CountyID)
+Gazetteer.geo$id = paste("1400000US", Gazetteer.geo$id, sep = "")
+
+#input data is pamindex or kmindex function
+#Give data a 1400000US index
+reviseid_140US <- function(data){
+    data$CensusTract <- as.character(data$CensusTract) 
+    data$CensusTract = paste("1400000US", data$CensusTract, sep = "")
+    return(data)
+}
+
+#Combination of cluster indexed data and tracts
+#Tract level cluster data
+Tractdata <- function(data){
+    data <- reviseid_140US(data)
+    Tractlevel<- left_join(tract.shapefile, data, by = c("id" = "CensusTract"))
+    return(Tractlevel)
+}
+
+#input tractlevel data and concatenate with county-tract level index
+middledata <- function(data){   
+    data <- reviseid_140US(data)
+    Middledata <- left_join(data, tract_county, by = c("CensusTract" = "CensusTract")) 
+    Middledata$countyidChar = as.character(Middledata$countyidChar)
+    return (Middledata)
+}
+
+
+Countydata <- function(data){
+    Mdata <- middledata(data)
+    county.shapefile$id = as.character(county.shapefile$id)
+    CountyTractlevel <- left_join(county.shapefile, Mdata,by = c("id"="countyidChar" ))
+    return (CountyTractlevel)
+    #write.csv(CountyTractlevel,path) return 20.52GB file......
+}
+
+buildpunc <- function(data){
+    data <- reviseid_140US(data)
+    Punc_data <- left_join(data,Gazetteer.geo,by=c('CensusTract' = 'id'))
+    return (Punc_data)
+}
+```
+
+```{r mapping}
+yourMap <- ggplot() +
+  geom_polygon(data = tracdata, aes(x=long, y=lat, group = group, fill = Change_Population), colour = "black", size = 0.15)
+yourMap
